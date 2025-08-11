@@ -44,8 +44,8 @@ def add_technical_indicators(df):
     df['Bollinger_Upper'] = sma_20 + (std_20 * 2)
     df['Bollinger_Lower'] = sma_20 - (std_20 * 2)
     
-    # Confirm columns added:
-    st.write("Added indicators:", df.columns.tolist())
+    # Debug: print added columns
+    st.write("Technical indicators added:", df.columns.tolist())
     return df
 
 def prepare_features(df):
@@ -55,7 +55,8 @@ def prepare_features(df):
 
     features = ['close_lag1', 'close_lag2', 'SMA_14', 'EMA_14', 'RSI_14', 'MACD', 'Bollinger_Upper', 'Bollinger_Lower']
 
-    st.write("Columns available before dropna:", df.columns.tolist())  # <-- add this line to debug
+    # Debug: show columns present before dropping NA
+    st.write("Columns available before dropna:", df.columns.tolist())
 
     missing_cols = [col for col in features + ['Close'] if col not in df.columns]
     if missing_cols:
