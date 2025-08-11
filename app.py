@@ -178,7 +178,7 @@ def fetch_data(ticker, period="1y", interval="1d"):
     return pd.DataFrame()
 
 def add_technical_indicators(df):
-    """Add technical indicators with proper error handling"""
+    """Add comprehensive technical indicators with proper error handling"""
     df = df.copy()
     st.write("Columns at start of add_technical_indicators:", df.columns.tolist())
 
@@ -187,36 +187,112 @@ def add_technical_indicators(df):
         return df
 
     try:
-        # Simple Moving Average
+        # Basic Moving Averages (Multiple timeframes)
+        df['SMA_5'] = df['Close'].rolling(window=5, min_periods=1).mean()
         df['SMA_14'] = df['Close'].rolling(window=14, min_periods=1).mean()
-        
-        # Exponential Moving Average
+        df['SMA_50'] = df['Close'].rolling(window=50, min_periods=1).mean()
         df['EMA_14'] = df['Close'].ewm(span=14, adjust=False).mean()
+        df['EMA_50'] = df['Close'].ewm(span=50, adjust=False).mean()
         
-        # RSI calculation
-        delta = df['Close'].diff()
-        gain = (delta.where(delta > 0, 0)).rolling(window=14, min_periods=1).mean()
-        loss = (-delta.where(delta < 0, 0)).rolling(window=14, min_periods=1).mean()
+        # Moving Average Crossovers (Strong predictive signals)
+        df['SMA_5_14_ratio'] = df['SMA_5'] / (df['SMA_14'] + 1e-10)
+        df['SMA_14_50_ratio'] = df['SMA_14'] / (df['SMA_50'] + 1e-10)
+        df['EMA_14_50_ratio'] = df['EMA_14'] / (df['EMA_50'] + 1e-10)
         
-        # Avoid division by zero
-        rs = gain / (loss + 1e-10)  # Add small epsilon to avoid division by zero
-        df['RSI_14'] = 100 - (100 / (1 + rs))
+        # Price Position Relative to Moving Averages
+        df['price_above_SMA14'] = (df['Close'] > df['SMA_14']).astype(int)
+        df['price_above_SMA50'] = (df['Close'] > df['SMA_50']).astype(int)
         
-        # MACD
+        # Volatility Features
+        df['volatility_10'] = df['Close'].rolling(window=10, min_periods=1).std()
+        df['volatility_30'] = df['Close'].rolling(window=30, min_periods=1).std()
+        df['volatility_ratio'] = df['volatility_10'] / (df['volatility_30'] + 1e-10)
+        
+        # Price change features (momentum)
+        df['returns_1d'] = df['Close'].pct_change(1)
+        df['returns_3d'] = df['Close'].pct_change(3)
+        df['returns_7d'] = df['Close'].pct_change(7)
+        df['returns_14d'] = df['Close'].pct_change(14)
+        
+        # Cumulative returns (trend strength)
+        df['cum_returns_5d'] = df['returns_1d'].rolling(5, min_periods=1).sum()
+        df['cum_returns_10d'] = df['returns_1d'].rolling(10, min_periods=1).sum()
+        
+        # RSI with multiple periods
+        for period in [7, 14, 21]:
+            delta = df['Close'].diff()
+            gain = (delta.where(delta > 0, 0)).rolling(window=period, min_periods=1).mean()
+            loss = (-delta.where(delta < 0, 0)).rolling(window=period, min_periods=1).mean()
+            rs = gain / (loss + 1e-10)
+            df[f'RSI_{period}'] = 100 - (100 / (1 + rs))
+        
+        # MACD with signal line
         ema_12 = df['Close'].ewm(span=12, adjust=False).mean()
         ema_26 = df['Close'].ewm(span=26, adjust=False).mean()
         df['MACD'] = ema_12 - ema_26
+        df['MACD_signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
+        df['MACD_histogram'] = df['MACD'] - df['MACD_signal']
         
-        # Bollinger Bands
-        sma_20 = df['Close'].rolling(window=20, min_periods=1).mean()
-        std_20 = df['Close'].rolling(window=20, min_periods=1).std()
-        df['Bollinger_Upper'] = sma_20 + (std_20 * 2)
-        df['Bollinger_Lower'] = sma_20 - (std_20 * 2)
-
-        # Fill any remaining NaN values with forward fill
-        df = df.fillna(method='ffill').fillna(method='bfill')
+        # Bollinger Bands with additional features
+        for period in [20, 50]:
+            sma = df['Close'].rolling(window=period, min_periods=1).mean()
+            std = df['Close'].rolling(window=period, min_periods=1).std()
+            df[f'BB_upper_{period}'] = sma + (std * 2)
+            df[f'BB_lower_{period}'] = sma - (std * 2)
+            df[f'BB_width_{period}'] = (df[f'BB_upper_{period}'] - df[f'BB_lower_{period}']) / sma
+            df[f'BB_position_{period}'] = (df['Close'] - df[f'BB_lower_{period}']) / (df[f'BB_upper_{period}'] - df[f'BB_lower_{period}'])
         
-        st.write("Columns after adding indicators:", df.columns.tolist())
+        # Volume-based features (if volume available)
+        if 'Volume' in df.columns:
+            df['volume_sma_10'] = df['Volume'].rolling(window=10, min_periods=1).mean()
+            df['volume_sma_30'] = df['Volume'].rolling(window=30, min_periods=1).mean()
+            df['volume_ratio'] = df['Volume'] / (df['volume_sma_10'] + 1e-10)
+            df['price_volume'] = df['Close'] * df['Volume']
+            df['volume_price_trend'] = df['price_volume'].rolling(window=5, min_periods=1).mean()
+            
+            # On-Balance Volume (OBV)
+            df['OBV'] = (df['Volume'] * np.sign(df['Close'].diff())).cumsum()
+            df['OBV_sma'] = df['OBV'].rolling(window=10, min_periods=1).mean()
+        
+        # High-Low features (if available)
+        if 'High' in df.columns and 'Low' in df.columns:
+            df['daily_range'] = df['High'] - df['Low']
+            df['daily_range_pct'] = df['daily_range'] / df['Close']
+            df['high_low_ratio'] = df['High'] / (df['Low'] + 1e-10)
+            
+            # True Range and Average True Range (ATR)
+            df['prev_close'] = df['Close'].shift(1)
+            df['true_range'] = np.maximum(
+                df['High'] - df['Low'],
+                np.maximum(
+                    abs(df['High'] - df['prev_close']),
+                    abs(df['Low'] - df['prev_close'])
+                )
+            )
+            df['ATR_14'] = df['true_range'].rolling(window=14, min_periods=1).mean()
+            df.drop(['prev_close', 'true_range'], axis=1, inplace=True)
+        
+        # Market structure features
+        df['higher_high'] = ((df['Close'] > df['Close'].shift(1)) & 
+                            (df['Close'].shift(1) > df['Close'].shift(2))).astype(int)
+        df['lower_low'] = ((df['Close'] < df['Close'].shift(1)) & 
+                          (df['Close'].shift(1) < df['Close'].shift(2))).astype(int)
+        
+        # Seasonal/Cyclical features
+        if 'Date' in df.columns:
+            df['day_of_week'] = pd.to_datetime(df['Date']).dt.dayofweek
+            df['day_of_month'] = pd.to_datetime(df['Date']).dt.day
+            df['month'] = pd.to_datetime(df['Date']).dt.month
+            df['quarter'] = pd.to_datetime(df['Date']).dt.quarter
+        
+        # Statistical features
+        df['close_zscore_20'] = (df['Close'] - df['Close'].rolling(20, min_periods=1).mean()) / (df['Close'].rolling(20, min_periods=1).std() + 1e-10)
+        df['close_percentile_20'] = df['Close'].rolling(20, min_periods=1).rank(pct=True)
+        
+        # Fill any remaining NaN values
+        df = df.fillna(method='ffill').fillna(method='bfill').fillna(0)
+        
+        st.write("Columns after adding enhanced indicators:", df.columns.tolist())
         
     except Exception as e:
         st.error(f"Error adding technical indicators: {str(e)}")
@@ -224,44 +300,153 @@ def add_technical_indicators(df):
     return df
 
 def prepare_features(df):
-    """Prepare features for machine learning"""
+    """Prepare comprehensive features for machine learning"""
     try:
         df = add_technical_indicators(df)
         df = df.copy()
         
-        # Add lagged features
-        df['close_lag1'] = df['Close'].shift(1)
-        df['close_lag2'] = df['Close'].shift(2)
+        # Enhanced lagged features (multiple time horizons)
+        for lag in [1, 2, 3, 5, 10]:
+            df[f'close_lag{lag}'] = df['Close'].shift(lag)
+            df[f'returns_lag{lag}'] = df['returns_1d'].shift(lag) if 'returns_1d' in df.columns else df['Close'].pct_change().shift(lag)
         
-        # Add volume if available
+        # Rolling statistics as features
+        for window in [5, 10, 20]:
+            df[f'close_mean_{window}'] = df['Close'].rolling(window, min_periods=1).mean()
+            df[f'close_std_{window}'] = df['Close'].rolling(window, min_periods=1).std()
+            df[f'close_min_{window}'] = df['Close'].rolling(window, min_periods=1).min()
+            df[f'close_max_{window}'] = df['Close'].rolling(window, min_periods=1).max()
+            df[f'close_range_{window}'] = df[f'close_max_{window}'] - df[f'close_min_{window}']
+        
+        st.write("Columns after adding enhanced lags and rolling stats:", df.columns.tolist())
+
+        # Define comprehensive feature set
+        base_features = [
+            # Lagged prices and returns
+            'close_lag1', 'close_lag2', 'close_lag3', 'close_lag5', 'close_lag10',
+            'returns_lag1', 'returns_lag2', 'returns_lag3',
+            
+            # Moving averages and ratios
+            'SMA_5', 'SMA_14', 'SMA_50', 'EMA_14', 'EMA_50',
+            'SMA_5_14_ratio', 'SMA_14_50_ratio', 'EMA_14_50_ratio',
+            'price_above_SMA14', 'price_above_SMA50',
+            
+            # Volatility and momentum
+            'volatility_10', 'volatility_30', 'volatility_ratio',
+            'returns_1d', 'returns_3d', 'returns_7d', 'returns_14d',
+            'cum_returns_5d', 'cum_returns_10d',
+            
+            # Technical indicators
+            'RSI_7', 'RSI_14', 'RSI_21',
+            'MACD', 'MACD_signal', 'MACD_histogram',
+            
+            # Bollinger Bands
+            'BB_width_20', 'BB_position_20', 'BB_width_50', 'BB_position_50',
+            
+            # Statistical features
+            'close_zscore_20', 'close_percentile_20',
+            
+            # Market structure
+            'higher_high', 'lower_low',
+            
+            # Rolling statistics
+            'close_mean_5', 'close_std_5', 'close_range_5',
+            'close_mean_10', 'close_std_10', 'close_range_10',
+            'close_mean_20', 'close_std_20', 'close_range_20'
+        ]
+        
+        # Add volume features if available
+        volume_features = []
         if 'Volume' in df.columns:
-            df['volume_sma_5'] = df['Volume'].rolling(window=5, min_periods=1).mean()
-
-        st.write("Columns after adding lags:", df.columns.tolist())
-
-        # Define feature columns
-        features = ['close_lag1', 'close_lag2', 'SMA_14', 'EMA_14', 'RSI_14', 'MACD', 'Bollinger_Upper', 'Bollinger_Lower']
+            volume_features = [
+                'volume_sma_10', 'volume_sma_30', 'volume_ratio', 
+                'volume_price_trend', 'OBV', 'OBV_sma'
+            ]
         
-        # Add volume feature if available
-        if 'volume_sma_5' in df.columns:
-            features.append('volume_sma_5')
+        # Add high-low features if available
+        high_low_features = []
+        if 'High' in df.columns and 'Low' in df.columns:
+            high_low_features = [
+                'daily_range', 'daily_range_pct', 'high_low_ratio', 'ATR_14'
+            ]
+        
+        # Add seasonal features if available
+        seasonal_features = []
+        if 'day_of_week' in df.columns:
+            seasonal_features = ['day_of_week', 'day_of_month', 'month', 'quarter']
+        
+        # Combine all features
+        all_features = base_features + volume_features + high_low_features + seasonal_features
+        
+        # Filter features that actually exist in the dataframe
+        available_features = [f for f in all_features if f in df.columns]
+        
+        st.write(f"Available features ({len(available_features)}): {available_features[:10]}{'...' if len(available_features) > 10 else ''}")
 
         # Check for missing columns
-        missing_cols = [col for col in features + ['Close'] if col not in df.columns]
+        missing_cols = [col for col in available_features + ['Close'] if col not in df.columns]
         if missing_cols:
             st.error(f"Missing columns before processing: {missing_cols}")
             return pd.DataFrame(), pd.Series(dtype=float)
 
         # Drop rows with NaN values
-        df_clean = df.dropna(subset=features + ['Close'])
+        df_clean = df.dropna(subset=available_features + ['Close'])
         st.write(f"Data shape after dropna: {df_clean.shape}")
         
-        if len(df_clean) < 50:  # Need minimum data for training
-            st.error(f"Insufficient data after cleaning: {len(df_clean)} rows. Need at least 50 rows.")
+        if len(df_clean) < 100:  # Increased minimum for more complex features
+            st.error(f"Insufficient data after cleaning: {len(df_clean)} rows. Need at least 100 rows for enhanced features.")
             return pd.DataFrame(), pd.Series(dtype=float)
 
-        X = df_clean[features]
+        X = df_clean[available_features]
         y = df_clean['Close']
+        
+        # Feature selection using correlation and variance
+        st.subheader("🔍 Feature Analysis")
+        
+        # Remove features with very low variance
+        feature_variances = X.var()
+        low_variance_features = feature_variances[feature_variances < 1e-6].index.tolist()
+        if low_variance_features:
+            st.write(f"Removing {len(low_variance_features)} low-variance features")
+            X = X.drop(columns=low_variance_features)
+        
+        # Remove highly correlated features
+        correlation_matrix = X.corr().abs()
+        upper_triangle = correlation_matrix.where(
+            np.triu(np.ones(correlation_matrix.shape), k=1).astype(bool)
+        )
+        
+        high_corr_features = [column for column in upper_triangle.columns 
+                             if any(upper_triangle[column] > 0.95)]
+        if high_corr_features:
+            st.write(f"Removing {len(high_corr_features)} highly correlated features")
+            X = X.drop(columns=high_corr_features)
+        
+        # Feature importance preview (quick RF)
+        if len(X) > 50 and len(X.columns) > 5:
+            try:
+                from sklearn.ensemble import RandomForestRegressor
+                quick_rf = RandomForestRegressor(n_estimators=50, random_state=42, max_depth=5)
+                split_idx = int(len(X) * 0.8)
+                X_temp_train = X.iloc[:split_idx]
+                y_temp_train = y.iloc[:split_idx]
+                quick_rf.fit(X_temp_train, y_temp_train)
+                
+                feature_importance = pd.DataFrame({
+                    'feature': X.columns,
+                    'importance': quick_rf.feature_importances_
+                }).sort_values('importance', ascending=False)
+                
+                # Keep top features for performance
+                top_features = feature_importance.head(min(30, len(X.columns)))['feature'].tolist()
+                X = X[top_features]
+                st.write(f"Selected top {len(top_features)} most important features")
+                
+            except Exception as e:
+                st.write(f"Feature selection failed, using all features: {e}")
+        
+        st.write(f"Final feature set: {len(X.columns)} features")
+        st.write(f"Final data shape: {X.shape}")
         
         # Check for infinite values
         if np.isinf(X.values).any() or np.isinf(y.values).any():
@@ -276,10 +461,235 @@ def prepare_features(df):
 
 @st.cache_resource
 def train_model(X, y):
-    """Train the machine learning model with comprehensive evaluation"""
+    """Train multiple models and select the best one with comprehensive evaluation"""
     try:
         # Use temporal split (no shuffling for time series)
         split_idx = int(len(X) * 0.8)
+        X_train, X_test = X.iloc[:split_idx], X.iloc[split_idx:]
+        y_train, y_test = y.iloc[:split_idx], y.iloc[split_idx:]
+        
+        st.write(f"Training set size: {len(X_train)}, Test set size: {len(X_test)}")
+        
+        # Try multiple models
+        models = {
+            'Random Forest': RandomForestRegressor(
+                n_estimators=200, 
+                random_state=42,
+                max_depth=15,
+                min_samples_split=3,
+                min_samples_leaf=1,
+                max_features='sqrt'
+            ),
+            'Random Forest (Deep)': RandomForestRegressor(
+                n_estimators=100,
+                random_state=42,
+                max_depth=20,
+                min_samples_split=2,
+                min_samples_leaf=1,
+                max_features=0.8
+            ),
+            'Random Forest (Wide)': RandomForestRegressor(
+                n_estimators=300,
+                random_state=42,
+                max_depth=10,
+                min_samples_split=5,
+                min_samples_leaf=2,
+                max_features='sqrt'
+            )
+        }
+        
+        # If we have enough features, try gradient boosting
+        if len(X.columns) >= 10:
+            try:
+                from sklearn.ensemble import GradientBoostingRegressor
+                models['Gradient Boosting'] = GradientBoostingRegressor(
+                    n_estimators=150,
+                    random_state=42,
+                    max_depth=6,
+                    learning_rate=0.1,
+                    subsample=0.8
+                )
+            except ImportError:
+                pass
+        
+        best_model = None
+        best_score = -np.inf
+        best_metrics = None
+        model_results = {}
+        
+        st.subheader("🤖 Model Comparison")
+        
+        for name, model in models.items():
+            try:
+                # Train model
+                model.fit(X_train, y_train)
+                
+                # Make predictions
+                train_preds = model.predict(X_train)
+                test_preds = model.predict(X_test)
+                
+                # Calculate metrics
+                test_r2 = r2_score(y_test, test_preds)
+                test_rmse = np.sqrt(mean_squared_error(y_test, test_preds))
+                test_mae = mean_absolute_error(y_test, test_preds)
+                
+                model_results[name] = {
+                    'r2': test_r2,
+                    'rmse': test_rmse,
+                    'mae': test_mae
+                }
+                
+                # Update best model based on R2 score
+                if test_r2 > best_score:
+                    best_score = test_r2
+                    best_model = model
+                    best_name = name
+                    
+                    # Store comprehensive metrics for best model
+                    train_rmse = np.sqrt(mean_squared_error(y_train, train_preds))
+                    train_mae = mean_absolute_error(y_train, train_preds)
+                    train_r2 = r2_score(y_train, train_preds)
+                    train_mape = np.mean(np.abs((y_train - train_preds) / y_train)) * 100
+                    test_mape = np.mean(np.abs((y_test - test_preds) / y_test)) * 100
+                    
+                    best_metrics = {
+                        'train': {
+                            'rmse': train_rmse,
+                            'mae': train_mae,
+                            'r2': train_r2,
+                            'mape': train_mape
+                        },
+                        'test': {
+                            'rmse': test_rmse,
+                            'mae': test_mae,
+                            'r2': test_r2,
+                            'mape': test_mape,
+                            'actual': y_test.values,
+                            'predicted': test_preds,
+                            'dates': X_test.index
+                        }
+                    }
+                
+            except Exception as e:
+                st.write(f"Failed to train {name}: {e}")
+                continue
+        
+        # Display model comparison
+        if model_results:
+            comparison_df = pd.DataFrame(model_results).T
+            comparison_df = comparison_df.round(4)
+            st.write("**Model Performance Comparison:**")
+            st.dataframe(comparison_df)
+            
+            st.success(f"🏆 Best Model: **{best_name}** (R² = {best_score:.4f})")
+        
+        if best_model is None:
+            st.error("All models failed to train")
+            return None, None
+        
+        # Display comprehensive metrics for best model
+        st.subheader("📊 Best Model Performance Metrics")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.write("**Training Set Performance:**")
+            st.metric("RMSE", f"${best_metrics['train']['rmse']:.2f}")
+            st.metric("MAE", f"${best_metrics['train']['mae']:.2f}")
+            st.metric("R² Score", f"{best_metrics['train']['r2']:.4f}")
+            st.metric("MAPE", f"{best_metrics['train']['mape']:.2f}%")
+        
+        with col2:
+            st.write("**Test Set Performance:**")
+            st.metric("RMSE", f"${best_metrics['test']['rmse']:.2f}")
+            st.metric("MAE", f"${best_metrics['test']['mae']:.2f}")
+            st.metric("R² Score", f"{best_metrics['test']['r2']:.4f}")
+            st.metric("MAPE", f"{best_metrics['test']['mape']:.2f}%")
+        
+        # Performance interpretation with more nuanced thresholds
+        test_r2 = best_metrics['test']['r2']
+        if test_r2 > 0.7:
+            performance_msg = "🟢 Excellent model performance!"
+        elif test_r2 > 0.5:
+            performance_msg = "🟡 Good model performance"
+        elif test_r2 > 0.3:
+            performance_msg = "🟠 Moderate model performance"
+        elif test_r2 > 0.1:
+            performance_msg = "🔶 Fair model performance - room for improvement"
+        else:
+            performance_msg = "🔴 Poor model performance - consider feature engineering"
+        
+        st.info(f"**Model Assessment:** {performance_msg}")
+        
+        # Enhanced improvement suggestions
+        if test_r2 < 0.5:
+            st.subheader("💡 Specific Improvement Strategies")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.write("**🔧 Feature Engineering:**")
+                if test_r2 < 0.2:
+                    st.write("- ✅ Add more lagged features (3, 5, 10 days)")
+                    st.write("- ✅ Try different MA periods (5, 21, 50, 100)")
+                    st.write("- ✅ Add momentum indicators (ROC, Stochastic)")
+                    st.write("- ✅ Include market volatility (VIX if available)")
+                    st.write("- ✅ Add price transformation (log returns)")
+                
+                if len(X.columns) < 25:
+                    st.write("- 📊 Enable volume features")
+                    st.write("- 📅 Enable seasonal features") 
+                    st.write("- 🎯 Add support/resistance levels")
+                
+            with col2:
+                st.write("**📈 Data & Model:**")
+                st.write("- ⏰ Try longer data period (2y or 5y)")
+                st.write("- 🎭 Test different prediction horizons")
+                st.write("- 🔄 Use different train/test splits")
+                st.write("- 🎪 Try ensemble methods")
+                
+                mape = best_metrics['test']['mape']
+                if mape > 15:
+                    st.write("- 🎯 Consider predicting direction instead of price")
+                    st.write("- 🔍 Check for regime changes in data")
+                    st.write("- 📊 Try different target transformations")
+            
+            # Stock-specific advice
+            st.write("**📊 Stock-Specific Tips:**")
+            current_volatility = best_metrics['test']['rmse'] / np.mean(best_metrics['test']['actual'])
+            if current_volatility > 0.1:
+                st.warning("⚠️ High volatility stock - consider shorter prediction horizons")
+            else:
+                st.info("ℹ️ Stable stock - try longer-term predictions")
+            
+            # Advanced techniques suggestion
+            if test_r2 < 0.3:
+                st.error("🔬 **Advanced Techniques Needed:**")
+                st.write("- Try LSTM/GRU neural networks")
+                st.write("- Use ensemble of different model types")  
+                st.write("- Consider external factors (news, sentiment)")
+                st.write("- Implement regime-switching models")
+                st.write("- Use cross-validation with time series splits")
+        
+        # Check for overfitting with more detail
+        r2_diff = best_metrics['train']['r2'] - best_metrics['test']['r2']
+        if r2_diff > 0.2:
+            st.warning(f"⚠️ Significant overfitting detected (Training R²: {best_metrics['train']['r2']:.3f}, Test R²: {best_metrics['test']['r2']:.3f})")
+            st.write("**Overfitting Solutions:**")
+            st.write("- Reduce model complexity (fewer trees, lower depth)")
+            st.write("- Increase regularization")
+            st.write("- Use more training data")
+            st.write("- Apply feature selection")
+        elif r2_diff > 0.1:
+            st.warning(f"⚠️ Moderate overfitting detected (Training R²: {best_metrics['train']['r2']:.3f}, Test R²: {best_metrics['test']['r2']:.3f})")
+        elif r2_diff < 0.05:
+            st.success("✅ Model shows good generalization (low overfitting)")
+        
+        return best_model, best_metrics
+        
+    except Exception as e:
+        st.error(f"Error training model: {str(e)}")
+        return None, None(X) * 0.8)
         X_train, X_test = X.iloc[:split_idx], X.iloc[split_idx:]
         y_train, y_test = y.iloc[:split_idx], y.iloc[split_idx:]
         
@@ -387,9 +797,9 @@ def predict_next(model, last_features):
         return None
 
 # Main execution
-if st.button("Fetch, Train & Predict"):
+if st.button("Fetch, Train & Predict", type="primary"):
     with st.spinner("Fetching data..."):
-        data = fetch_data(ticker)
+        data = fetch_data(ticker, period=data_period)
         
     if data.empty:
         st.error(f"No data found for ticker {ticker}.")
@@ -405,10 +815,10 @@ if st.button("Fetch, Train & Predict"):
             with st.spinner("Training model..."):
                 result = train_model(X, y)
                 
-            if result[0] is not None:  # Check if model training was successful
-                model, metrics = result
-                test_rmse = metrics['test']['rmse']
-                st.success(f"Model trained successfully! Test RMSE: ${test_rmse:.2f}")
+                if result[0] is not None:  # Check if model training was successful
+                    model, metrics = result
+                    test_rmse = metrics['test']['rmse']
+                    st.success(f"Model trained successfully! Test RMSE: ${test_rmse:.2f}")
 
                 # Create model evaluation visualizations
                 st.subheader("📈 Model Evaluation Plots")
@@ -525,7 +935,8 @@ if st.button("Fetch, Train & Predict"):
                     bias_status = "📈 Overestimating" if mean_error > 0 else "📉 Underestimating" if mean_error < 0 else "✅ Unbiased"
                     st.metric("Bias Status", bias_status)
 
-                # Make prediction
+                # Make final prediction
+                st.subheader("🎯 Price Prediction")
                 last_features = X.iloc[-1].values
                 predicted_price = predict_next(model, last_features)
                 
@@ -534,15 +945,43 @@ if st.button("Fetch, Train & Predict"):
                     price_change = predicted_price - current_price
                     price_change_pct = (price_change / current_price) * 100
                     
-                    st.success(f"**Predicted next closing price for {ticker}: ${predicted_price:.2f}**")
-                    st.info(f"Current price: ${current_price:.2f}")
-                    st.info(f"Predicted change: ${price_change:.2f} ({price_change_pct:+.2f}%)")
+                    # Display prediction with confidence context
+                    col1, col2, col3 = st.columns(3)
+                    
+                    with col1:
+                        st.metric("Current Price", f"${current_price:.2f}")
+                    
+                    with col2:
+                        st.metric(
+                            "Predicted Next Price", 
+                            f"${predicted_price:.2f}",
+                            delta=f"{price_change:+.2f} ({price_change_pct:+.2f}%)"
+                        )
+                    
+                    with col3:
+                        # Confidence level based on model performance
+                        confidence_level = "High" if metrics['test']['r2'] > 0.7 else "Medium" if metrics['test']['r2'] > 0.4 else "Low"
+                        confidence_color = "green" if confidence_level == "High" else "orange" if confidence_level == "Medium" else "red"
+                        st.markdown(f"**Confidence:** :{confidence_color}[{confidence_level}]")
+                        
+                        # Expected error range
+                        expected_error = metrics['test']['mae']
+                        st.write(f"Expected error: ±${expected_error:.2f}")
+                    
+                    # Prediction context
+                    if abs(price_change_pct) > 5:
+                        st.warning(f"⚠️ Large predicted change ({price_change_pct:+.1f}%) - use with caution")
+                    elif abs(price_change_pct) < 1:
+                        st.info("ℹ️ Small predicted change - market may be stable")
+                    else:
+                        st.success("✅ Moderate predicted change within normal range")
 
-                    # Create visualization
+                    # Create final visualization with historical data and prediction
+                    st.subheader("📊 Price History and Prediction")
                     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10))
                     
-                    # Plot 1: Historical prices and prediction
-                    ax1.plot(data['Date'], data['Close'], label='Historical Close', linewidth=1.5)
+                    # Plot 1: Full historical prices and prediction
+                    ax1.plot(data['Date'], data['Close'], label='Historical Close', linewidth=1.5, color='blue')
                     
                     # Add prediction point
                     last_date = data['Date'].iloc[-1]
@@ -553,22 +992,34 @@ if st.button("Fetch, Train & Predict"):
                     
                     ax1.scatter(predicted_date, predicted_price, color='red', 
                               label=f'Predicted Close (${predicted_price:.2f})', 
-                              s=100, marker='*', zorder=5)
+                              s=150, marker='*', zorder=5, edgecolors='black', linewidth=1)
                     
-                    ax1.set_title(f"{ticker} Closing Prices and Prediction")
+                    # Add confidence interval around prediction
+                    expected_error = metrics['test']['mae']
+                    ax1.fill_between([predicted_date, predicted_date], 
+                                    [predicted_price - expected_error, predicted_price - expected_error],
+                                    [predicted_price + expected_error, predicted_price + expected_error],
+                                    alpha=0.2, color='red', label=f'±{expected_error:.2f} confidence')
+                    
+                    ax1.set_title(f"{ticker} Full Price History and Prediction")
                     ax1.set_xlabel("Date")
                     ax1.set_ylabel("Price ($)")
                     ax1.legend()
                     ax1.grid(True, alpha=0.3)
                     
-                    # Plot 2: Recent performance focus
+                    # Plot 2: Recent performance focus with model performance overlay
                     recent_data = data.tail(60)  # Last 60 days
                     ax2.plot(recent_data['Date'], recent_data['Close'], 
                             label='Recent Close', linewidth=2, color='blue')
                     ax2.scatter(predicted_date, predicted_price, color='red', 
-                              label=f'Predicted', s=100, marker='*', zorder=5)
+                              label=f'Predicted (R²={metrics["test"]["r2"]:.3f})', 
+                              s=150, marker='*', zorder=5, edgecolors='black', linewidth=1)
                     
-                    ax2.set_title(f"Recent {ticker} Performance (Last 60 Days)")
+                    # Add error bars for prediction
+                    ax2.errorbar(predicted_date, predicted_price, yerr=expected_error,
+                               fmt='none', color='red', capsize=5, capthick=2, alpha=0.7)
+                    
+                    ax2.set_title(f"Recent Performance (Last 60 Days) - Model RMSE: ${metrics['test']['rmse']:.2f}")
                     ax2.set_xlabel("Date")
                     ax2.set_ylabel("Price ($)")
                     ax2.legend()
@@ -590,21 +1041,60 @@ if st.button("Fetch, Train & Predict"):
 # Add some information about the app
 st.sidebar.header("About")
 st.sidebar.info("""
-This app predicts stock prices using machine learning.
+This app predicts stock prices using machine learning with enhanced features.
 
-**Features used:**
-- Lagged closing prices
-- Simple Moving Average (14 days)
-- Exponential Moving Average (14 days)  
-- RSI (14 days)
-- MACD
-- Bollinger Bands
+**Enhanced Features:**
+- Multiple moving averages & crossovers
+- Volatility indicators
+- Momentum & trend features  
+- Multiple RSI periods
+- Enhanced MACD with signals
+- Bollinger Bands positioning
+- Volume analysis (when available)
+- Statistical features
+- Market structure patterns
+- Seasonal components
 
-**Model:** Random Forest Regressor
+**Models:** Automatic selection from:
+- Random Forest (multiple configurations)
+- Gradient Boosting (when available)
 
 **Note:** This is for educational purposes only. 
 Do not use for actual trading decisions.
 """)
+
+# Model Configuration
+st.sidebar.header("⚙️ Configuration")
+
+# Data settings
+st.sidebar.subheader("Data Settings")
+data_period = st.sidebar.selectbox(
+    "Data Period",
+    ["6mo", "1y", "2y", "5y"],
+    index=1,
+    help="Longer periods provide more training data but may include outdated patterns"
+)
+
+# Feature engineering options
+st.sidebar.subheader("Feature Engineering")
+use_volume = st.sidebar.checkbox("Use Volume Features", value=True, help="Include volume-based indicators when available")
+use_seasonal = st.sidebar.checkbox("Use Seasonal Features", value=True, help="Include day/month/quarter features")
+max_features = st.sidebar.slider("Max Features", 10, 50, 30, help="Maximum number of features to use")
+
+# Model settings
+st.sidebar.subheader("Model Settings")
+ensemble_size = st.sidebar.selectbox(
+    "Model Ensemble",
+    ["Single Best", "Top 2 Average", "All Models Average"],
+    help="How to combine model predictions"
+)
+
+prediction_confidence = st.sidebar.selectbox(
+    "Prediction Confidence",
+    ["Conservative", "Moderate", "Aggressive"],
+    index=1,
+    help="How to interpret model confidence levels"
+)
 
 st.sidebar.header("Instructions")
 st.sidebar.write("""
@@ -624,9 +1114,40 @@ st.sidebar.write("""
 
 **Common issues:**
 - Network connectivity problems
-- Yahoo Finance server overload
+- Yahoo Finance server overload  
 - Invalid ticker symbols
+
+**For Poor Model Performance:**
+- Try longer data periods (1y → 2y)
+- Use popular, liquid stocks (AAPL, MSFT, GOOGL)
+- Enable all feature options
+- Check if stock has consistent patterns
+- Volatile or trending markets work better than sideways markets
 """)
+
+# Model Performance Guide
+st.sidebar.header("📈 Performance Guide")
+st.sidebar.info("""
+**R² Score Interpretation:**
+- 0.7+ = Excellent (rare for stock prediction)
+- 0.5-0.7 = Good  
+- 0.3-0.5 = Moderate
+- 0.1-0.3 = Fair
+- <0.1 = Poor
+
+**Improvement Tips:**
+- **More data**: Use 2y+ for better patterns
+- **Different stocks**: Try trending/volatile stocks
+- **Feature engineering**: Enable all options
+- **Market conditions**: Bull/bear markets easier to predict than sideways
+""")
+
+# Quick Performance Test
+st.sidebar.header("🚀 Quick Test")
+if st.sidebar.button("Test with AAPL (2Y)", help="Quick test with known good parameters"):
+    st.session_state.ticker_input = "AAPL"
+    st.session_state.test_mode = True
+    st.experimental_rerun()
 
 # Add network status check
 st.sidebar.header("Network Test")
