@@ -20,6 +20,8 @@ def fetch_data(ticker, period="1y", interval="1d"):
     return df.reset_index() if not df.empty else pd.DataFrame()
 
 def add_technical_indicators(df):
+    if df.empty:
+        return df
     # SMA and EMA (14 days)
     df['SMA_14'] = df['Close'].rolling(window=14).mean()
     df['EMA_14'] = df['Close'].ewm(span=14, adjust=False).mean()
@@ -42,17 +44,26 @@ def add_technical_indicators(df):
     df['Bollinger_Upper'] = sma_20 + (std_20 * 2)
     df['Bollinger_Lower'] = sma_20 - (std_20 * 2)
     
+    # Confirm columns added:
+    st.write("Added indicators:", df.columns.tolist())
     return df
 
 def prepare_features(df):
     df = add_technical_indicators(df)
     df['close_lag1'] = df['Close'].shift(1)
     df['close_lag2'] = df['Close'].shift(2)
-    
-    # Include selected indicators as features
+
     features = ['close_lag1', 'close_lag2', 'SMA_14', 'EMA_14', 'RSI_14', 'MACD', 'Bollinger_Upper', 'Bollinger_Lower']
+
+    st.write("Columns available before dropna:", df.columns.tolist())  # <-- add this line to debug
+
+    missing_cols = [col for col in features + ['Close'] if col not in df.columns]
+    if missing_cols:
+        st.error(f"Missing columns before dropna: {missing_cols}")
+        return pd.DataFrame(), pd.Series(dtype=float)
+
     df = df.dropna(subset=features + ['Close'])
-    
+
     X = df[features]
     y = df['Close']
     return X, y
