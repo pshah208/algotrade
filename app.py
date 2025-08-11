@@ -4,7 +4,7 @@ import pandas as pd
 import numpy as np
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import mean_squared_error
+from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 import matplotlib.pyplot as plt
 from datetime import timedelta
 import warnings
@@ -276,7 +276,7 @@ def prepare_features(df):
 
 @st.cache_resource
 def train_model(X, y):
-    """Train the machine learning model"""
+    """Train the machine learning model with comprehensive evaluation"""
     try:
         # Use temporal split (no shuffling for time series)
         split_idx = int(len(X) * 0.8)
@@ -296,21 +296,86 @@ def train_model(X, y):
         
         model.fit(X_train, y_train)
         
-        # Make predictions and calculate RMSE
+        # Make predictions
         train_preds = model.predict(X_train)
         test_preds = model.predict(X_test)
         
+        # Calculate comprehensive metrics for training set
         train_rmse = np.sqrt(mean_squared_error(y_train, train_preds))
+        train_mae = mean_absolute_error(y_train, train_preds)
+        train_r2 = r2_score(y_train, train_preds)
+        
+        # Calculate comprehensive metrics for test set
         test_rmse = np.sqrt(mean_squared_error(y_test, test_preds))
+        test_mae = mean_absolute_error(y_test, test_preds)
+        test_r2 = r2_score(y_test, test_preds)
         
-        st.write(f"Training RMSE: {train_rmse:.2f}")
-        st.write(f"Test RMSE: {test_rmse:.2f}")
+        # Calculate percentage errors for better interpretation
+        train_mape = np.mean(np.abs((y_train - train_preds) / y_train)) * 100
+        test_mape = np.mean(np.abs((y_test - test_preds) / y_test)) * 100
         
-        return model, test_rmse, X_test.index
+        # Store all metrics in a dictionary
+        metrics = {
+            'train': {
+                'rmse': train_rmse,
+                'mae': train_mae,
+                'r2': train_r2,
+                'mape': train_mape
+            },
+            'test': {
+                'rmse': test_rmse,
+                'mae': test_mae,
+                'r2': test_r2,
+                'mape': test_mape,
+                'actual': y_test.values,
+                'predicted': test_preds,
+                'dates': X_test.index
+            }
+        }
+        
+        # Display metrics in a nice format
+        st.subheader("📊 Model Performance Metrics")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.write("**Training Set Performance:**")
+            st.metric("RMSE", f"${train_rmse:.2f}")
+            st.metric("MAE", f"${train_mae:.2f}")
+            st.metric("R² Score", f"{train_r2:.4f}")
+            st.metric("MAPE", f"{train_mape:.2f}%")
+        
+        with col2:
+            st.write("**Test Set Performance:**")
+            st.metric("RMSE", f"${test_rmse:.2f}")
+            st.metric("MAE", f"${test_mae:.2f}")
+            st.metric("R² Score", f"{test_r2:.4f}")
+            st.metric("MAPE", f"{test_mape:.2f}%")
+        
+        # Performance interpretation
+        if test_r2 > 0.8:
+            performance_msg = "🟢 Excellent model performance!"
+        elif test_r2 > 0.6:
+            performance_msg = "🟡 Good model performance"
+        elif test_r2 > 0.4:
+            performance_msg = "🟠 Moderate model performance"
+        else:
+            performance_msg = "🔴 Poor model performance - consider feature engineering"
+        
+        st.info(f"**Model Assessment:** {performance_msg}")
+        
+        # Check for overfitting
+        r2_diff = train_r2 - test_r2
+        if r2_diff > 0.1:
+            st.warning(f"⚠️ Potential overfitting detected (Training R²: {train_r2:.3f}, Test R²: {test_r2:.3f})")
+        elif r2_diff < 0.05:
+            st.success("✅ Model shows good generalization (low overfitting)")
+        
+        return model, metrics
         
     except Exception as e:
         st.error(f"Error training model: {str(e)}")
-        return None, None, None
+        return None, None
 
 def predict_next(model, last_features):
     """Predict next price"""
@@ -341,8 +406,124 @@ if st.button("Fetch, Train & Predict"):
                 result = train_model(X, y)
                 
             if result[0] is not None:  # Check if model training was successful
-                model, rmse, test_indices = result
-                st.success(f"Model trained successfully! Test RMSE: {rmse:.2f}")
+                model, metrics = result
+                test_rmse = metrics['test']['rmse']
+                st.success(f"Model trained successfully! Test RMSE: ${test_rmse:.2f}")
+
+                # Create model evaluation visualizations
+                st.subheader("📈 Model Evaluation Plots")
+                
+                # Create a 2x2 subplot layout
+                fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(15, 12))
+                
+                # Plot 1: Actual vs Predicted (Test Set)
+                actual = metrics['test']['actual']
+                predicted = metrics['test']['predicted']
+                
+                ax1.scatter(actual, predicted, alpha=0.6, color='blue', s=30)
+                
+                # Add perfect prediction line (y=x)
+                min_val = min(actual.min(), predicted.min())
+                max_val = max(actual.max(), predicted.max())
+                ax1.plot([min_val, max_val], [min_val, max_val], 'r--', 
+                        linewidth=2, label='Perfect Prediction (y=x)')
+                
+                # Add trend line
+                z = np.polyfit(actual, predicted, 1)
+                p = np.poly1d(z)
+                ax1.plot(actual, p(actual), 'g--', alpha=0.8, 
+                        label=f'Trend Line (slope={z[0]:.3f})')
+                
+                ax1.set_xlabel('Actual Prices ($)')
+                ax1.set_ylabel('Predicted Prices ($)')
+                ax1.set_title(f'Actual vs Predicted Prices\n(R² = {metrics["test"]["r2"]:.3f})')
+                ax1.legend()
+                ax1.grid(True, alpha=0.3)
+                
+                # Add text box with metrics
+                textstr = f'RMSE: ${metrics["test"]["rmse"]:.2f}\nMAE: ${metrics["test"]["mae"]:.2f}\nMAPE: {metrics["test"]["mape"]:.2f}%'
+                props = dict(boxstyle='round', facecolor='wheat', alpha=0.5)
+                ax1.text(0.05, 0.95, textstr, transform=ax1.transAxes, fontsize=9,
+                        verticalalignment='top', bbox=props)
+                
+                # Plot 2: Residuals Plot (Test Set)
+                residuals = actual - predicted
+                ax2.scatter(predicted, residuals, alpha=0.6, color='red', s=30)
+                ax2.axhline(y=0, color='black', linestyle='-', linewidth=1)
+                ax2.set_xlabel('Predicted Prices ($)')
+                ax2.set_ylabel('Residuals ($)')
+                ax2.set_title('Residuals Plot (Test Set)')
+                ax2.grid(True, alpha=0.3)
+                
+                # Add residual statistics
+                residual_std = np.std(residuals)
+                ax2.axhline(y=residual_std, color='orange', linestyle='--', alpha=0.7, label=f'+1σ ({residual_std:.2f})')
+                ax2.axhline(y=-residual_std, color='orange', linestyle='--', alpha=0.7, label=f'-1σ ({-residual_std:.2f})')
+                ax2.legend()
+                
+                # Plot 3: Time Series of Predictions vs Actual (if we have enough test data)
+                if len(actual) > 10:
+                    test_indices = range(len(actual))
+                    ax3.plot(test_indices, actual, label='Actual', color='blue', linewidth=2)
+                    ax3.plot(test_indices, predicted, label='Predicted', color='red', linewidth=2, alpha=0.7)
+                    ax3.fill_between(test_indices, actual, predicted, alpha=0.2, color='gray')
+                    ax3.set_xlabel('Time Steps (Test Period)')
+                    ax3.set_ylabel('Price ($)')
+                    ax3.set_title('Time Series: Actual vs Predicted (Test Set)')
+                    ax3.legend()
+                    ax3.grid(True, alpha=0.3)
+                else:
+                    ax3.text(0.5, 0.5, 'Insufficient test data\nfor time series plot', 
+                            ha='center', va='center', transform=ax3.transAxes, fontsize=12)
+                    ax3.set_title('Time Series Plot (Insufficient Data)')
+                
+                # Plot 4: Error Distribution
+                ax4.hist(residuals, bins=min(20, len(residuals)//2), alpha=0.7, color='skyblue', edgecolor='black')
+                ax4.axvline(x=0, color='red', linestyle='--', linewidth=2, label='Zero Error')
+                ax4.axvline(x=np.mean(residuals), color='green', linestyle='-', linewidth=2, 
+                           label=f'Mean Error ({np.mean(residuals):.2f})')
+                ax4.set_xlabel('Prediction Error ($)')
+                ax4.set_ylabel('Frequency')
+                ax4.set_title(f'Error Distribution\n(Std: ${np.std(residuals):.2f})')
+                ax4.legend()
+                ax4.grid(True, alpha=0.3)
+                
+                plt.tight_layout()
+                st.pyplot(fig)
+                
+                # Additional insights
+                st.subheader("🔍 Model Insights")
+                
+                col1, col2, col3 = st.columns(3)
+                
+                with col1:
+                    # Prediction accuracy analysis
+                    within_5_percent = np.sum(np.abs(residuals) <= actual * 0.05) / len(actual) * 100
+                    within_10_percent = np.sum(np.abs(residuals) <= actual * 0.10) / len(actual) * 100
+                    
+                    st.metric("Predictions within 5%", f"{within_5_percent:.1f}%")
+                    st.metric("Predictions within 10%", f"{within_10_percent:.1f}%")
+                
+                with col2:
+                    # Directional accuracy (for next-day predictions)
+                    if len(actual) > 1:
+                        actual_direction = np.diff(actual) > 0
+                        predicted_direction = np.diff(predicted) > 0
+                        directional_accuracy = np.sum(actual_direction == predicted_direction) / len(actual_direction) * 100
+                        st.metric("Directional Accuracy", f"{directional_accuracy:.1f}%")
+                    
+                    largest_error = np.abs(residuals).max()
+                    st.metric("Largest Error", f"${largest_error:.2f}")
+                
+                with col3:
+                    # Model consistency
+                    error_consistency = 1 - (np.std(residuals) / np.mean(np.abs(residuals)))
+                    st.metric("Error Consistency", f"{error_consistency:.3f}")
+                    
+                    # Bias detection
+                    mean_error = np.mean(residuals)
+                    bias_status = "📈 Overestimating" if mean_error > 0 else "📉 Underestimating" if mean_error < 0 else "✅ Unbiased"
+                    st.metric("Bias Status", bias_status)
 
                 # Make prediction
                 last_features = X.iloc[-1].values
