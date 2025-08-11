@@ -691,7 +691,7 @@ def train_model(X, y):
         st.error(f"Error training model: {str(e)}")
         import traceback
         st.error(f"Detailed error: {traceback.format_exc()}")
-        return None, None
+        return None, None(X) * 0.8
         X_train, X_test = X.iloc[:split_idx], X.iloc[split_idx:]
         y_train, y_test = y.iloc[:split_idx], y.iloc[split_idx:]
         
