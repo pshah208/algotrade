@@ -5,6 +5,8 @@ from sklearn.ensemble import RandomForestRegressor
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_squared_error
 import numpy as np
+import matplotlib.pyplot as plt
+from datetime import timedelta
 
 st.title("Algorithmic Trading Price Predictor")
 
@@ -33,7 +35,6 @@ def train_model(X, y):
     return model, rmse
 
 def predict_next(model, last_two_closes):
-    import numpy as np
     pred = model.predict(np.array(last_two_closes).reshape(1, -1))
     return pred[0]
 
@@ -56,3 +57,22 @@ if st.button("Fetch, Train & Predict"):
             last_two = data['Close'].iloc[-2:].values
             predicted_price = predict_next(model, last_two)
             st.success(f"Predicted next closing price for {ticker}: ${predicted_price:.2f}")
+
+            # Plot historical close prices
+            fig, ax = plt.subplots(figsize=(10, 5))
+            ax.plot(data['Date'], data['Close'], label='Historical Close', color='blue')
+
+            # Predicted date is one trading day after last date
+            last_date = data['Date'].iloc[-1]
+            predicted_date = last_date + timedelta(days=1)
+
+            # Plot predicted price as a red star
+            ax.scatter(predicted_date, predicted_price, color='red', label='Predicted Close', s=100, marker='*')
+
+            ax.set_title(f"{ticker} Closing Prices and Prediction")
+            ax.set_xlabel("Date")
+            ax.set_ylabel("Price")
+            ax.legend()
+            ax.grid(True)
+
+            st.pyplot(fig)
