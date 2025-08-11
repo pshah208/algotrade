@@ -14,7 +14,42 @@ warnings.filterwarnings('ignore')
 
 # Configure requests to handle network issues
 requests.packages.urllib3.disable_warnings()
+# Add some information about the app
+st.sidebar.header("About")
+st.sidebar.info("""
+This app predicts stock prices using machine learning with enhanced features.
 
+**Enhanced Features:**
+- Multiple moving averages & crossovers
+- Volatility indicators
+- Momentum & trend features  
+- Multiple RSI periods
+- Enhanced MACD with signals
+- Bollinger Bands positioning
+- Volume analysis (when available)
+- Statistical features
+- Market structure patterns
+- Seasonal components
+
+**Models:** Automatic selection from:
+- Random Forest (multiple configurations)
+- Gradient Boosting (when available)
+
+**Note:** This is for educational purposes only. 
+Do not use for actual trading decisions.
+""")
+
+# Model Configuration
+st.sidebar.header("⚙️ Configuration")
+
+# Data settings
+st.sidebar.subheader("Data Settings")
+data_period = st.sidebar.selectbox(
+    "Data Period",
+    ["6mo", "1y", "2y", "5y"],
+    index=1,
+    help="Longer periods provide more training data but may include outdated patterns"
+)
 # Alternative: Use sample data if connection fails
 def get_sample_data(ticker):
     """Generate sample data when network fails"""
@@ -1040,42 +1075,7 @@ if st.button("Fetch, Train & Predict", type="primary"):
                         st.subheader("Feature Importance")
                         st.dataframe(feature_importance)
 
-# Add some information about the app
-st.sidebar.header("About")
-st.sidebar.info("""
-This app predicts stock prices using machine learning with enhanced features.
 
-**Enhanced Features:**
-- Multiple moving averages & crossovers
-- Volatility indicators
-- Momentum & trend features  
-- Multiple RSI periods
-- Enhanced MACD with signals
-- Bollinger Bands positioning
-- Volume analysis (when available)
-- Statistical features
-- Market structure patterns
-- Seasonal components
-
-**Models:** Automatic selection from:
-- Random Forest (multiple configurations)
-- Gradient Boosting (when available)
-
-**Note:** This is for educational purposes only. 
-Do not use for actual trading decisions.
-""")
-
-# Model Configuration
-st.sidebar.header("⚙️ Configuration")
-
-# Data settings
-st.sidebar.subheader("Data Settings")
-data_period = st.sidebar.selectbox(
-    "Data Period",
-    ["6mo", "1y", "2y", "5y"],
-    index=1,
-    help="Longer periods provide more training data but may include outdated patterns"
-)
 
 # Feature engineering options
 st.sidebar.subheader("Feature Engineering")
