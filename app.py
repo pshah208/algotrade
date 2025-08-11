@@ -33,7 +33,8 @@ def train_model(X, y):
     return model, rmse
 
 def predict_next(model, last_two_closes):
-    pred = model.predict([last_two_closes])
+    import numpy as np
+    pred = model.predict(np.array(last_two_closes).reshape(1, -1))
     return pred[0]
 
 if st.button("Fetch, Train & Predict"):
